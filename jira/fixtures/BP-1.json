@@ -1,0 +1,10 @@
+{
+  "key": "BP-1",
+  "fields": {
+    "summary": "Web chat answers cancellation, out-of-scope and fraud questions correctly",
+    "description": "As a customer-service employee, I want the BankPolicy Copilot web chat to answer policy questions correctly, so that I give customers the right next step.\n\nPage: the BankPolicy Copilot web chat, lab build 1.2.1.\n\nAcceptance criteria:\nAC-01: Given the page is open, when nothing is typed, then the title reads \"BankPolicy Copilot - web chat\" and the instruction contains \"Do not enter real customer data\".\nAC-02: Given the page is open, when the question \"Can a settled international transfer be cancelled?\" is typed and Ask is clicked, then within 5 seconds the answer contains \"cannot be cancelled\" and the citations contain \"P02\".\nAC-03: Given the page is open, when the question \"What will the weather be tomorrow?\" is typed and Ask is clicked, then the answer contains \"only approved bank policy questions\" and the citations show \"none\".\nAC-04: Given the page is open, when the question \"The customer says the transfer was not authorised. What next?\" is typed and Ask is clicked, then the status line contains \"requires_escalation: true\".",
+    "status": {
+      "name": "Ready for Test"
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "a1-bankpolicy-cicd-demo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A1 Agentic AI for QE - demo of a test-writing agent deployed in a CI/CD pipeline (BankPolicy Copilot web chat). All content is fictional.",
+  "scripts": {
+    "start": "node app/server.js",
+    "test": "playwright test",
+    "agent": "node agent/generate-tests.mjs",
+    "guard": "node agent/check-spec.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

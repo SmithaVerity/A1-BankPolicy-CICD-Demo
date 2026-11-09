@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>BankPolicy Copilot - web chat</title>
+  <style>
+    body { font-family: Segoe UI, Arial, sans-serif; max-width: 760px; margin: 40px auto; color: #1f2937; }
+    h1 { color: #0b3d6e; font-size: 1.6rem; }
+    form { display: flex; gap: 8px; margin: 16px 0; }
+    #question { flex: 1; padding: 8px; font-size: 1rem; }
+    #ask { padding: 8px 16px; background: #0b3d6e; color: #fff; border: 0; cursor: pointer; }
+    #answer { min-height: 48px; padding: 12px; background: #f3f4f6; border-radius: 6px; }
+    #citations { margin-top: 8px; }
+    .cite { display: inline-block; margin-right: 6px; padding: 2px 8px; background: #dbeafe; border-radius: 10px; }
+    #status { color: #6b7280; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <!-- BankPolicy Copilot lab web chat, lab build 1.2.1 (CI edition). All content is fictional.
+       Fixed answer logic, no model: the page gives the same answer every run so a pipeline can test it.
+       Seeded open defect DEF-104: an unauthorised-transfer question is answered correctly and cites P05,
+       but the status line shows requires_escalation: false. -->
+  <h1 id="title">BankPolicy Copilot - web chat</h1>
+  <p id="instruction">Ask a question about the approved bank policies. Do not enter real customer data.</p>
+  <form id="chat" onsubmit="askQuestion(); return false">
+    <input id="question" type="text" maxlength="500" placeholder="Type your question" aria-label="Question">
+    <button id="ask" type="submit">Ask</button>
+  </form>
+  <div id="answer" aria-live="polite"></div>
+  <div id="citations"></div>
+  <p id="status">Status: ready</p>
+
+  <script>
+    // Each rule: words that must all appear in the question (lower case), the answer, the citations,
+    // and the requires_escalation flag. The first matching rule wins.
+    const RULES = [
+      { all: ['not authorised'], alt: [['unauthorised'], ['not authorized'], ['unauthorized'], ['fraud']],
+        answer: 'Follow the fraud-response workflow immediately. Record the report time and the transaction reference. Do not promise reimbursement or recovery.',
+        cites: ['P05'],
+        escalate: false /* DEF-104: should be true (P05) */ },
+      { all: ['settled', 'international'],
+        answer: 'A settled international transfer cannot be cancelled through the ordinary cancellation process. A recovery request is a separate process and its outcome is not guaranteed.',
+        cites: ['P02', 'P03'], escalate: false },
+      { all: ['scheduled', 'domestic'],
+        answer: 'A scheduled domestic transfer may be stopped before execution after the scheduled date and current status are verified.',
+        cites: ['P04'], escalate: false },
+      { all: ['international', 'cancel'],
+        answer: 'An international transfer may be cancelled only before final settlement. Check the transaction state and any compliance hold first.',
+        cites: ['P01'], escalate: false },
+      { all: ['dispute'],
+        answer: 'Record the transaction date, amount, merchant descriptor and the customer explanation in the approved dispute workflow. A chargeback is not guaranteed.',
+        cites: ['P06'], escalate: false },
+      { all: ['address'],
+        answer: 'Complete the approved identity check in the bank system before advising on an address change.',
+        cites: ['P07'], escalate: false }
+    ];
+    const BANK_WORDS = ['transfer', 'cancel', 'refund', 'recovery', 'card', 'account', 'fee', 'policy', 'payment'];
+
+    function matches(q, rule) {
+      if (rule.all.every(w => q.includes(w))) return true;
+      return (rule.alt || []).some(set => set.every(w => q.includes(w)));
+    }
+
+    function reply(question) {
+      const q = question.toLowerCase();
+      const rule = RULES.find(r => matches(q, r));
+      if (rule) return rule;
+      if (!BANK_WORDS.some(w => q.includes(w))) {
+        return { answer: 'I can answer only approved bank policy questions. Please contact the correct internal team.', cites: [], escalate: false };
+      }
+      return { answer: 'I cannot determine this from the approved policies.', cites: [], escalate: false };
+    }
+
+    function askQuestion() {
+      const question = document.getElementById('question').value.trim();
+      const status = document.getElementById('status');
+      if (!question) { status.textContent = 'Status: please type a question'; return; }
+      status.textContent = 'Status: thinking...';
+      document.getElementById('answer').textContent = '';
+      document.getElementById('citations').textContent = '';
+      // A short delay, as a real copilot takes time to answer; tests must wait for the answer, not sleep.
+      setTimeout(() => {
+        const r = reply(question);
+        document.getElementById('answer').textContent = r.answer;
+        const citations = document.getElementById('citations');
+        citations.textContent = 'Citations: ';
+        if (r.cites.length === 0) {
+          citations.append('none');
+        } else {
+          r.cites.forEach(c => { const s = document.createElement('span'); s.className = 'cite'; s.textContent = c; citations.append(s); });
+        }
+        status.textContent = 'Status: answered | requires_escalation: ' + r.escalate;
+      }, 600);
+    }
+  </script>
+</body>
+</html>
