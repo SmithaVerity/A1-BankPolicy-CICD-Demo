@@ -16,7 +16,6 @@ on:
 
 permissions:
   contents: read
-  models: read          # lets the workflow's own token call GitHub Models (no API key)
 
 concurrency:
   group: generate-tests-${{ github.event.inputs.issue_key || github.event.client_payload.issue_key }}
@@ -33,7 +32,8 @@ jobs:
       JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
       JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
       JIRA_MODE: ${{ vars.JIRA_MODE || 'live' }}
-      MODEL: ${{ vars.MODEL || 'openai/gpt-4.1-mini' }}
+      MODEL: ${{ vars.MODEL || 'gpt-4.1-mini' }}
+      MODEL_ENDPOINT: ${{ vars.MODEL_ENDPOINT || 'https://api.openai.com/v1/chat/completions' }}
     steps:
       - name: Check the story key
         run: echo "$ISSUE_KEY" | grep -Eq '^[A-Z][A-Z0-9]+-[0-9]+$' || { echo "Not a Jira story key - $ISSUE_KEY"; exit 1; }
@@ -50,10 +50,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Agent reads the story from Jira and writes the tests (GitHub Models)
+      - name: Agent reads the story from Jira and writes the tests (OpenAI model)
         run: node agent/generate-tests.mjs "$ISSUE_KEY"
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}   # given to this step only
 
       - name: Guard check (run again, independently of the agent)
         run: node agent/check-spec.mjs "$ISSUE_KEY"
