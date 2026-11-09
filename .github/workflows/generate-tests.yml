@@ -1,0 +1,102 @@
+# Pipeline 1 of 2: the test-writing agent.
+# Starts when Jira sends a web request (story moved to "Ready for Test"), or by hand with "Run workflow".
+# The agent reads the story, writes Playwright tests, the guard checks them, and a pull request is opened.
+# The agent cannot merge: the pull request goes through CI (ci.yml) and a person's review.
+name: Generate tests (agent)
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_key:
+        description: Jira story key (for example BP-1)
+        required: true
+        default: BP-1
+  repository_dispatch:
+    types: [jira-ready-for-test]
+
+permissions:
+  contents: read
+  models: read          # lets the workflow's own token call GitHub Models (no API key)
+
+concurrency:
+  group: generate-tests-${{ github.event.inputs.issue_key || github.event.client_payload.issue_key }}
+  cancel-in-progress: false
+
+jobs:
+  write-tests:
+    name: Agent writes tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ISSUE_KEY: ${{ github.event.inputs.issue_key || github.event.client_payload.issue_key }}
+      JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+      JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+      JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+      JIRA_MODE: ${{ vars.JIRA_MODE || 'live' }}
+      MODEL: ${{ vars.MODEL || 'openai/gpt-4.1-mini' }}
+    steps:
+      - name: Check the story key
+        run: echo "$ISSUE_KEY" | grep -Eq '^[A-Z][A-Z0-9]+-[0-9]+$' || { echo "Not a Jira story key - $ISSUE_KEY"; exit 1; }
+
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.BOT_PAT }}   # pushes made with this token start the CI workflow
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Agent reads the story from Jira and writes the tests (GitHub Models)
+        run: node agent/generate-tests.mjs "$ISSUE_KEY"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Guard check (run again, independently of the agent)
+        run: node agent/check-spec.mjs "$ISSUE_KEY"
+
+      - name: Commit to a branch and open a pull request
+        env:
+          GH_TOKEN: ${{ secrets.BOT_PAT }}
+        run: |
+          BRANCH="agent/$ISSUE_KEY"
+          git config user.name "bankpolicy-test-agent"
+          git config user.email "bankpolicy-test-agent@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          git add "tests/generated/$ISSUE_KEY.spec.js"
+          if git diff --cached --quiet; then
+            git commit --allow-empty -m "test($ISSUE_KEY): agent re-run, tests unchanged"
+          else
+            git commit -m "test($ISSUE_KEY): agent-written Playwright tests for $ISSUE_KEY"
+          fi
+          git push --force origin "$BRANCH"
+          SUMMARY=$(node -e "const r=require('./agent-out/run-$ISSUE_KEY.json');console.log(r.summary)")
+          MODEL_USED=$(node -e "const r=require('./agent-out/run-$ISSUE_KEY.json');console.log(r.model+' ('+r.modelCalls+' call(s))')")
+          {
+            echo "Tests written by the test-writing agent for Jira story **$ISSUE_KEY**: $SUMMARY"
+            echo
+            echo "- File: \`tests/generated/$ISSUE_KEY.spec.js\` (one test per acceptance criterion)"
+            echo "- Model: $MODEL_USED"
+            echo "- Guard check: passed (no test.fail/skip/only, no fixed waits, every expected value used, nothing changed outside tests/generated/)"
+            echo
+            echo "CI runs these tests against the BankPolicy web chat. **A person reviews and decides whether to merge. The agent cannot merge.**"
+          } > agent-out/pr-body.md
+          PR_URL=$(gh pr list --head "$BRANCH" --state open --json url --jq '.[0].url')
+          if [ -z "$PR_URL" ]; then
+            PR_URL=$(gh pr create --base main --head "$BRANCH" --title "$ISSUE_KEY: agent-written tests - $SUMMARY" --body-file agent-out/pr-body.md)
+          else
+            gh pr edit "$PR_URL" --body-file agent-out/pr-body.md
+          fi
+          echo "PR_URL=$PR_URL" >> "$GITHUB_ENV"
+          echo "- Pull request: $PR_URL" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Tell Jira that the tests are written
+        continue-on-error: true
+        run: |
+          node --input-type=module -e "
+            import { addComment } from './agent/jira.mjs';
+            await addComment(process.env.ISSUE_KEY, 'Tests written by the test-writing agent for ' + process.env.ISSUE_KEY + '. Pull request: ' + process.env.PR_URL + '\nCI is now running the tests. A person reviews the pull request and decides whether to merge.');
+          "
