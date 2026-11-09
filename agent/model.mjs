@@ -20,12 +20,23 @@ export async function callModel(messages) {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
-      Accept: 'application/json',
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ model: MODEL, messages, temperature: 0 }),
   });
-  if (!res.ok) throw new Error(`GitHub Models call failed: HTTP ${res.status} ${await res.text()}`);
-  const data = await res.json();
-  return { text: data.choices?.[0]?.message?.content || '', usage: data.usage || {}, model: data.model || MODEL };
+  const body = await res.text();
+  const info = `HTTP ${res.status}, content-type ${res.headers.get('content-type') || 'none'}, request id ${res.headers.get('x-request-id') || res.headers.get('x-github-request-id') || 'none'}`;
+  if (!res.ok) throw new Error(`GitHub Models call failed: ${info}\n${body.slice(0, 500)}`);
+  let data;
+  try {
+    data = JSON.parse(body);
+  } catch {
+    throw new Error(`GitHub Models returned a reply that is not JSON (${info}). First 300 characters:\n${body.slice(0, 300)}`);
+  }
+  if (!data.choices?.[0]?.message?.content) {
+    throw new Error(`GitHub Models reply has no answer text (${info}):\n${body.slice(0, 500)}`);
+  }
+  return { text: data.choices[0].message.content, usage: data.usage || {}, model: data.model || MODEL };
 }
