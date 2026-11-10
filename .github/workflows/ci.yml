@@ -1,7 +1,8 @@
 # Pipeline 2 of 2: continuous integration.
 # Runs on every pull request (including the agent's) and on main.
 # Starts the BankPolicy web chat, runs the Playwright tests, keeps the HTML report,
-# and posts the result on the Jira story when the pull request came from the agent.
+# and posts the result on the Jira story when the pull request came from an agent
+# (branch agent/<KEY> from the OpenAI version, agent-copilot/<KEY> from the Copilot version).
 name: CI
 
 on:
@@ -44,7 +45,7 @@ jobs:
           retention-days: 14
 
       - name: Post the result on the Jira story
-        if: always() && github.event_name == 'pull_request' && startsWith(github.head_ref, 'agent/')
+        if: always() && github.event_name == 'pull_request' && startsWith(github.head_ref, 'agent')
         continue-on-error: true
         env:
           HEAD_REF: ${{ github.head_ref }}
@@ -54,4 +55,4 @@ jobs:
           JIRA_MODE: ${{ vars.JIRA_MODE || 'live' }}
           PR_URL: ${{ github.event.pull_request.html_url }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: node agent/report-to-jira.mjs "${HEAD_REF#agent/}"
+        run: node agent/report-to-jira.mjs "${HEAD_REF##*/}"   # agent/BP-2 or agent-copilot/BP-2 -> BP-2

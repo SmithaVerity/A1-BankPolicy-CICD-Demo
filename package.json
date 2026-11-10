@@ -7,7 +7,8 @@
     "start": "node app/server.js",
     "test": "playwright test",
     "agent": "node agent/generate-tests.mjs",
-    "guard": "node agent/check-spec.mjs"
+    "guard": "node agent/check-spec.mjs",
+    "agent:copilot": "node agent/generate-tests-copilot.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.61.1"

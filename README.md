@@ -31,7 +31,7 @@ Expected result on lab build 1.2.1: AC-01, AC-02, AC-03 pass; **AC-04 fails** (o
 | Path | What it is |
 |---|---|
 | `app/` | BankPolicy Copilot web chat (fixed answers, no model) and a small server |
-| `agent/` | The agent, the guard check, Jira access, model access, Jira reporting |
+| `agent/` | The agents (OpenAI: `generate-tests.mjs`; GitHub Copilot: `generate-tests-copilot.mjs`), the guard check, Jira access, model access, Jira reporting |
 | `jira/BP-1_story.md` | Text to paste into Jira for story BP-1 |
 | `jira/fixtures/BP-1.json` | The same story for offline rehearsal (`JIRA_MODE=fixture`) |
 | `tests/generated/` | Where the agent writes its tests |
@@ -45,6 +45,7 @@ Expected result on lab build 1.2.1: AC-01, AC-02, AC-03 pass; **AC-04 fails** (o
 | `JIRA_EMAIL` | Secret | Email of the Jira account |
 | `JIRA_API_TOKEN` | Secret | Jira API token |
 | `MODEL_API_KEY` | Secret | OpenAI API key (used only by the agent step) |
+| `COPILOT_GITHUB_TOKEN` | Secret | Copilot version only: fine-grained token of a Copilot-licensed account with the account permission "Copilot Requests" (given only to Copilot) |
 | `BOT_PAT` | Secret | Fine-grained personal access token, this repository only: Contents and Pull requests read/write |
 | `MODEL` | Variable (optional) | Default `gpt-4.1-mini` |
 | `MODEL_ENDPOINT` | Variable (optional) | Default `https://api.openai.com/v1/chat/completions` (any OpenAI-compatible chat completions address) |
@@ -58,3 +59,28 @@ npx playwright install chromium
 JIRA_MODE=fixture MODEL_MODE=stub node agent/generate-tests.mjs BP-1   # offline build check with the reference spec
 npx playwright test                                                     # 3 passed, 1 failed (AC-04)
 ```
+
+## GitHub Copilot version (second agent, same pipeline)
+
+The same pipeline can run with **GitHub Copilot CLI** as the test-writing agent instead of the OpenAI model. Only the agent differs; the story, the instructions (rules 1–5), the guard check, the pull request, CI, Jira comments and branch protection are the same.
+
+| Item | OpenAI version | GitHub Copilot version |
+|---|---|---|
+| Workflow | `.github/workflows/generate-tests.yml` — **Generate tests (agent)** | `.github/workflows/generate-tests-copilot.yml` — **Generate tests (Copilot agent)** |
+| Start | Jira rule or Run workflow | Run workflow only (type the story key, for example BP-2) |
+| Agent | `agent/generate-tests.mjs` calls the OpenAI model (gpt-4.1-mini) | `agent/generate-tests-copilot.mjs` runs GitHub Copilot CLI (`copilot -p`, model setting `auto`) |
+| Limit on the agent | 2 model calls at most | 2 Copilot runs at most, 6 minutes each |
+| Branch | `agent/<KEY>` | `agent-copilot/<KEY>` |
+| Secret | `MODEL_API_KEY` | `COPILOT_GITHUB_TOKEN` (fine-grained token of a Copilot-licensed account, permission "Copilot Requests") |
+
+What Copilot is allowed to do — enforced by the Copilot CLI permission rules and the script, not by instructions:
+
+| Allowed | Not allowed |
+|---|---|
+| Read files in the repository checkout | Read files outside it |
+| Write `tests/generated/<KEY>.spec.js` | Write any other file |
+| — | Run any command (git, npm, gh, …) |
+| — | Open web addresses or use GitHub tools |
+| — | See the Jira token, `BOT_PAT` or any other secret (Copilot is started with only its own token) |
+
+The guard check (`agent/check-spec.mjs`) runs after every Copilot run, exactly as for the OpenAI version. The Copilot session transcript is kept as a run artifact (**copilot-session-&lt;KEY&gt;**). On Copilot Free the model is chosen by Copilot (Auto); the model used is shown in the run summary, the pull request and the Jira comment.

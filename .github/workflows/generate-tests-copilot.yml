@@ -1,0 +1,125 @@
+# Pipeline 1 of 2, GitHub Copilot version: the test-writing agent is GitHub Copilot CLI.
+# Same job as generate-tests.yml (OpenAI version): read the story, write Playwright tests,
+# guard check, pull request. Only the agent differs. Started by hand with "Run workflow".
+# The agent cannot merge: the pull request goes through CI (ci.yml) and a person's review.
+name: Generate tests (Copilot agent)
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_key:
+        description: Jira story key (for example BP-2)
+        required: true
+        default: BP-2
+
+permissions:
+  contents: read
+
+concurrency:
+  group: generate-tests-copilot-${{ github.event.inputs.issue_key }}
+  cancel-in-progress: false
+
+jobs:
+  write-tests:
+    name: Copilot writes tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ISSUE_KEY: ${{ github.event.inputs.issue_key }}
+      JIRA_MODE: ${{ vars.JIRA_MODE || 'live' }}
+      COPILOT_MODEL: auto          # Copilot Free: Copilot picks the model; the model used is recorded
+      COPILOT_CLI_VERSION: 1.0.108 # pinned so the permission flags stay the same
+    steps:
+      - name: Check the story key
+        run: echo "$ISSUE_KEY" | grep -Eq '^[A-Z][A-Z0-9]+-[0-9]+$' || { echo "Not a Jira story key - $ISSUE_KEY"; exit 1; }
+
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.BOT_PAT }}   # pushes made with this token start the CI workflow
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install GitHub Copilot CLI
+        run: |
+          npm install -g "@github/copilot@$COPILOT_CLI_VERSION"
+          copilot --version
+
+      - name: Copilot reads the story from Jira and writes the tests
+        run: node agent/generate-tests-copilot.mjs "$ISSUE_KEY"
+        env:
+          # The script reads Jira itself, then starts Copilot with only COPILOT_GITHUB_TOKEN:
+          # Copilot never sees the Jira token or BOT_PAT.
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+
+      - name: Guard check (run again, independently of the agent)
+        run: node agent/check-spec.mjs "$ISSUE_KEY"
+
+      - name: Keep the Copilot session transcript
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: copilot-session-${{ env.ISSUE_KEY }}
+          path: |
+            agent-out/copilot-session-*.md
+            agent-out/copilot-output-*.jsonl
+            agent-out/run-*.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Commit to a branch and open a pull request
+        env:
+          GH_TOKEN: ${{ secrets.BOT_PAT }}
+        run: |
+          BRANCH="agent-copilot/$ISSUE_KEY"
+          git config user.name "bankpolicy-copilot-agent"
+          git config user.email "bankpolicy-copilot-agent@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          git add "tests/generated/$ISSUE_KEY.spec.js"
+          if git diff --cached --quiet; then
+            git commit --allow-empty -m "test($ISSUE_KEY): Copilot re-run, tests unchanged"
+          else
+            git commit -m "test($ISSUE_KEY): Copilot-written Playwright tests for $ISSUE_KEY"
+          fi
+          git push --force origin "$BRANCH"
+          SUMMARY=$(node -e "const r=require('./agent-out/run-$ISSUE_KEY.json');console.log(r.summary)")
+          MODEL_USED=$(node -e "const r=require('./agent-out/run-$ISSUE_KEY.json');console.log('GitHub Copilot CLI, model '+r.model+' (setting: '+r.modelSetting+'; '+r.copilotRuns+' run(s))')")
+          echo "MODEL_USED=$MODEL_USED" >> "$GITHUB_ENV"
+          {
+            echo "Tests written by **GitHub Copilot** (test-writing agent) for Jira story **$ISSUE_KEY**: $SUMMARY"
+            echo
+            echo "- File: \`tests/generated/$ISSUE_KEY.spec.js\` (one test per acceptance criterion)"
+            echo "- Agent: $MODEL_USED"
+            echo "- Copilot's permission rules: write this one file only; no commands; no web; no GitHub tools; no secrets except its own token"
+            echo "- Guard check: passed (no test.fail/skip/only, no fixed waits, every expected value used, nothing changed outside tests/generated/)"
+            echo
+            echo "CI runs these tests against the BankPolicy web chat. **A person reviews and decides whether to merge. The agent cannot merge.**"
+          } > agent-out/pr-body.md
+          PR_URL=$(gh pr list --head "$BRANCH" --state open --json url --jq '.[0].url')
+          if [ -z "$PR_URL" ]; then
+            PR_URL=$(gh pr create --base main --head "$BRANCH" --title "[Copilot] $ISSUE_KEY: agent-written tests - $SUMMARY" --body-file agent-out/pr-body.md)
+          else
+            gh pr edit "$PR_URL" --body-file agent-out/pr-body.md
+          fi
+          echo "PR_URL=$PR_URL" >> "$GITHUB_ENV"
+          echo "- Pull request: $PR_URL" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Tell Jira that the tests are written
+        continue-on-error: true
+        env:
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        run: |
+          node --input-type=module -e "
+            import { addComment } from './agent/jira.mjs';
+            await addComment(process.env.ISSUE_KEY, 'Tests written by GitHub Copilot (test-writing agent) for ' + process.env.ISSUE_KEY + '. ' + process.env.MODEL_USED + '. Pull request: ' + process.env.PR_URL + '\nCI is now running the tests. A person reviews the pull request and decides whether to merge.');
+          "
